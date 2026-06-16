@@ -5,8 +5,8 @@ FROM maximhq/bifrost:${BIFROST_VERSION}
 ARG BIFROST_VERSION
 
 # Add version and metadata labels
-LABEL org.opencontainers.image.version=${BIFROST_VERSION} \\
-      org.opencontainers.image.description=\"Custom Bifrost build with BookStack MCP Server\"
+LABEL org.opencontainers.image.version=${BIFROST_VERSION} \
+      org.opencontainers.image.description="Custom Bifrost build with BookStack MCP Server"
 
 # 1. Switch to root to install all language runtimes at once
 USER root
