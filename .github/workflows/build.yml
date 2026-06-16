@@ -1,0 +1,86 @@
+name: Bifrost Custom - Docker Build
+
+# =============================================================================
+# TRIGGER SECTION
+# Defines when this workflow should execute.
+# =============================================================================
+on:
+  push:
+    branches:
+      - main
+    # CRITICAL: Prevents an infinite loop.
+    # This tells GitHub NOT to trigger a new build when the bot
+    # updates the .upstream-tag file.
+    paths-ignore:
+      - ".upstream-tag"
+  pull_request:
+  workflow_dispatch: # Allows the user to trigger the build manually from the Actions tab
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. ENVIRONMENT SETUP
+      # -----------------------------------------------------------------------
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for git operations
+          token: ${{ secrets.DOCKER_GIT_ACTIONS }} # Uses PAT for write access back to repo
+
+      # VERSION DISCOVERY:
+      # We query the Bifrost repository tags via API, filtering for 'transports/v*'
+      # to find the most recent application release.
+      - name: Discover Latest Bifrost Version
+        id: version
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[] | select(.name | startswith("transports/v")) | .name' | head -n 1 | sed 's/transports\///')
+          echo "Latest Bifrost Version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # 2. CONTAINER TOOLING
+      # -----------------------------------------------------------------------
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # Enables multi-platform builds (amd64, arm64, etc.)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.DOCKER_GIT_ACTIONS }}
+
+      # -----------------------------------------------------------------------
+      # 3. BUILD & PUBLISH
+      # -----------------------------------------------------------------------
+      # Build and push for multiple architectures.
+      # Tagging Strategy:
+      # 1. ':latest' -> For ease of deployment.
+      # 2. ':<version>' -> To pin to a specific Bifrost release.
+      # 3. 'sha-<hash>' -> For exact commit tracking and rollbacks.
+      - name: Build and push Docker image
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          docker buildx build \
+            --platform linux/amd64,linux/arm64,linux/arm/v7 \
+            --build-arg BIFROST_VERSION=${{ steps.version.outputs.version }} \
+            -t ghcr.io/${{ github.repository_owner }}/bifrost-custom:latest \
+            -t ghcr.io/${{ github.repository_owner }}/bifrost-custom:${{ steps.version.outputs.version }} \
+            -t ghcr.io/${{ github.repository_owner }}/bifrost-custom:sha-$SHORT_SHA \
+            --push \
+            .
+
+      # -----------------------------------------------------------------------
+      # 4. STATE MANAGEMENT
+      # -----------------------------------------------------------------------
+      # Update the .upstream-tag file. This acts as the "memory" for the
+      # auto-rebuild workflow to determine if a new version has been released.
+      - name: Update Upstream Tag
+        run: |
+          echo "${{ steps.version.outputs.version }}" > .upstream-tag
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .upstream-tag
+          git commit -m "Update upstream Bifrost version to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push https://x-access-token:${{ secrets.DOCKER_GIT_ACTIONS }}@github.com/${{ github.repository }} HEAD:main

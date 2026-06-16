@@ -1,0 +1,73 @@
+name: Bifrost Custom - Scheduled Rebuild
+
+# =============================================================================
+# TRIGGER SECTION
+# This workflow acts as a \"watcher\" that checks for updates automatically.
+# =============================================================================
+on:
+  schedule:
+    # Runs once every 24 hours at midnight UTC to check for new Bifrost tags.
+    - cron: \"0 0 * * *\" 
+  workflow_dispatch: # Allows the user to trigger a check manually
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. VERSION COMPARISON LOGIC
+      # This section determines if the image needs to be rebuilt.
+      # -----------------------------------------------------------------------
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.DOCKER_GIT_ACTIONS }}
+
+      # Step A: Get the current state of the upstream repository via GitHub API.
+      - name: Fetch latest upstream version
+        id: upstream
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[] | select(.name | startswith(\"transports/v\")) | .name' | head -n 1 | sed 's/transports\\///')
+          echo \"Current upstream version: $VERSION\"
+          echo \"version=$VERSION\" >> $GITHUB_OUTPUT
+
+      # Step B: Get the state of the last successful build from our own repo.
+      - name: Read last built version
+        id: prev
+        run: |
+          if [ -f .upstream-tag ]; then
+            echo \"prev_version=$(cat .upstream-tag)\" >> $GITHUB_OUTPUT
+          else
+            echo \"prev_version=none\" >> $GITHUB_OUTPUT
+          fi
+
+      # Step C: The Decision.
+      # Compare the current upstream version with the last built version.
+      # If they differ, we set a 'build' flag to true.
+      - name: Decide whether to build
+        id: decision
+        run: |
+          if [ \"${{ steps.upstream.outputs.version }}\" != \"${{ steps.prev.outputs.prev_version }}\" ]; then
+            echo \"build=true\" >> $GITHUB_OUTPUT
+          else
+            echo \"build=false\" >> $GITHUB_OUTPUT
+          fi
+
+      # -----------------------------------------------------------------------
+      # 2. CONDITIONAL TRIGGER
+      # Instead of building here, we trigger the main 'build.yml' workflow.
+      # This keeps the build logic centralized in one file.
+      # -----------------------------------------------------------------------
+      - name: Trigger Build Workflow
+        if: steps.decision.outputs.build == 'true'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.DOCKER_GIT_ACTIONS }}
+          script: |
+            github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build.yml',
+              ref: 'main'
+            });
