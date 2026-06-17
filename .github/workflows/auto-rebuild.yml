@@ -2,12 +2,12 @@ name: Bifrost Custom - Scheduled Rebuild
 
 # =============================================================================
 # TRIGGER SECTION
-# This workflow acts as a \"watcher\" that checks for updates automatically.
+# This workflow acts as a "watcher" that checks for updates automatically.
 # =============================================================================
 on:
   schedule:
     # Runs once every 24 hours at midnight UTC to check for new Bifrost tags.
-    - cron: \"0 0 * * *\" 
+    - cron: "0 0 * * *" 
   workflow_dispatch: # Allows the user to trigger a check manually
 
 jobs:
@@ -28,18 +28,18 @@ jobs:
       - name: Fetch latest upstream version
         id: upstream
         run: |
-          VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[] | select(.name | startswith(\"transports/v\")) | .name' | head -n 1 | sed 's/transports\\///')
-          echo \"Current upstream version: $VERSION\"
-          echo \"version=$VERSION\" >> $GITHUB_OUTPUT
+          VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[] | select(.name | startswith("transports/v")) | .name' | head -n 1 | sed 's/transports\///')
+          echo "Current upstream version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       # Step B: Get the state of the last successful build from our own repo.
       - name: Read last built version
         id: prev
         run: |
           if [ -f .upstream-tag ]; then
-            echo \"prev_version=$(cat .upstream-tag)\" >> $GITHUB_OUTPUT
+            echo "prev_version=$(cat .upstream-tag)" >> $GITHUB_OUTPUT
           else
-            echo \"prev_version=none\" >> $GITHUB_OUTPUT
+            echo "prev_version=none" >> $GITHUB_OUTPUT
           fi
 
       # Step C: The Decision.
@@ -48,10 +48,10 @@ jobs:
       - name: Decide whether to build
         id: decision
         run: |
-          if [ \"${{ steps.upstream.outputs.version }}\" != \"${{ steps.prev.outputs.prev_version }}\" ]; then
-            echo \"build=true\" >> $GITHUB_OUTPUT
+          if [ "${{ steps.upstream.outputs.version }}" != "${{ steps.prev.outputs.prev_version }}" ]; then
+            echo "build=true" >> $GITHUB_OUTPUT
           else
-            echo \"build=false\" >> $GITHUB_OUTPUT
+            echo "build=false" >> $GITHUB_OUTPUT
           fi
 
       # -----------------------------------------------------------------------
