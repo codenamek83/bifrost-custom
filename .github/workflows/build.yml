@@ -1,65 +1,75 @@
-name: Bifrost Custom - Docker Build
+name: Bifrost Custom - Build & Deploy
 
-# =============================================================================
-# TRIGGER SECTION
-# Defines when this workflow should execute.
-# =============================================================================
 on:
+  schedule:
+    # Check every 24 hours at midnight UTC
+    - cron: "0 0 * * *"
   push:
     branches:
       - main
-    # CRITICAL: Prevents an infinite loop.
-    # This tells GitHub NOT to trigger a new build when the bot
-    # updates the .upstream-tag file.
     paths-ignore:
       - ".upstream-tag"
   pull_request:
-  workflow_dispatch: # Allows the user to trigger the build manually from the Actions tab
+  workflow_dispatch:
+
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
 
     steps:
-      # -----------------------------------------------------------------------
-      # 1. ENVIRONMENT SETUP
-      # -----------------------------------------------------------------------
+      # 1. CHECKOUT REPO
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetch all history for git operations
-          token: ${{ secrets.DOCKER_GIT_ACTIONS }} # Uses PAT for write access back to repo
+          fetch-depth: 0
+          token: ${{ secrets.DOCKER_GIT_ACTIONS }}
 
-      # VERSION DISCOVERY:
-      # We query the Bifrost repository tags via API, filtering for 'transports/v*'
-      # to find the most recent application release.
-      - name: Discover Latest Bifrost Version
+      # 2. DISCOVER VERSION
+      - name: Fetch latest upstream version
         id: version
         run: |
           VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[].name' | grep '^transports/v[0-9]\+\.[0-9]\+\.[0-9]\+$' | sed 's/transports\///' | sort -V | tail -n 1)
           echo "Latest Bifrost Version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # -----------------------------------------------------------------------
-      # 2. CONTAINER TOOLING
-      # -----------------------------------------------------------------------
+      # 3. VERSION CHECK LOGIC
+      - name: Read last built version
+        id: prev
+        run: |
+          if [ -f .upstream-tag ]; then
+            echo "prev_version=$(cat .upstream-tag)" >> $GITHUB_OUTPUT
+          else
+            echo "prev_version=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Decide whether to build
+        id: decision
+        run: |
+          # ALWAYS build if manually triggered, on push, or on pull_request.
+          # ONLY skip if triggered by 'schedule' and the upstream version hasn't changed.
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.version.outputs.version }}" = "${{ steps.prev.outputs.prev_version }}" ]; then
+            echo "should_run=false" >> $GITHUB_OUTPUT
+            echo "No new Bifrost release found. Skipping build."
+          else
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+
+      # 4. CONTAINER TOOLING (Runs only if decision is true)
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3 # Enables multi-platform builds (amd64, arm64, etc.)
+        if: steps.decision.outputs.should_run == 'true'
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GitHub Container Registry
+        if: steps.decision.outputs.should_run == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.DOCKER_GIT_ACTIONS }}
 
-      # -----------------------------------------------------------------------
-      # 3. BUILD & PUBLISH
-      # -----------------------------------------------------------------------
-      # Build and push for multiple architectures.
-      # Tagging Strategy:
-      # 1. ':latest' -> For ease of deployment.
-      # 2. ':<version>' -> To pin to a specific Bifrost release.
-      # 3. 'sha-<hash>' -> For exact commit tracking and rollbacks.
+      # 5. BUILD & PUBLISH
       - name: Build and push Docker image
+        if: steps.decision.outputs.should_run == 'true'
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
           docker buildx build \
@@ -71,16 +81,13 @@ jobs:
             --push \
             .
 
-      # -----------------------------------------------------------------------
-      # 4. STATE MANAGEMENT
-      # -----------------------------------------------------------------------
-      # Update the .upstream-tag file. This acts as the "memory" for the
-      # auto-rebuild workflow to determine if a new version has been released.
+      # 6. STATE MANAGEMENT
       - name: Update Upstream Tag
+        if: steps.decision.outputs.should_run == 'true' && github.event_name != 'pull_request'
         run: |
           echo "${{ steps.version.outputs.version }}" > .upstream-tag
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .upstream-tag
-          git commit -m "Update upstream Bifrost version to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.DOCKER_GIT_ACTIONS }}@github.com/${{ github.repository }} HEAD:main
+          git commit -m "chore: update upstream Bifrost version to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push https://x-access-token:${{ secrets.DOCKER_GIT_ACTIONS }}@github.com/${{ github.repository }} HEAD:${{ github.ref_name }}
