@@ -6,14 +6,42 @@ ARG BIFROST_VERSION
 
 # Add version and metadata labels
 LABEL org.opencontainers.image.version=${BIFROST_VERSION} \
-      org.opencontainers.image.description="Custom Bifrost build with BookStack MCP Server"
+      org.opencontainers.image.description="Custom Bifrost build with MCP Servers"
 
-# 1. Switch to root to install all language runtimes at once
+# Switch to root to install runtimes
 USER root
-RUN apk add --no-cache nodejs npm python3 py3-pip
 
-# 2. Add your MCP tools here as a list (Easy to scale!)
-RUN npm install -g bookstack-mcp-server 
+# Disable runtime transpiler cache inside Docker
+ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 
-# 3. Secure the container by switching back to the default user
+# Ensure global installs target /usr/local/bin
+ENV BUN_INSTALL=/usr/local
+ENV BUN_INSTALL_BIN=/usr/local/bin
+
+# Install system dependencies and Bun via official release binary
+# ca-certificates curl unzip - BUN INSTALLER
+# libgcc libstdc++ - BUN RUNTIME
+# nodejs npm - NODE-BASED MCP SERVERS
+# python3 py3-pip - PYTHON-BASED TOOLS / NATIVE BUILDS
+RUN apk add --no-cache ca-certificates curl unzip libgcc libstdc++ nodejs npm python3 py3-pip \
+    && arch="$(apk --print-arch)" \
+    && case "${arch##*-}" in \
+      x86_64) build="x64-musl-baseline";; \
+      aarch64) build="aarch64-musl";; \
+      *) echo "error: unsupported architecture: $arch"; exit 1 ;; \
+    esac \
+    && curl "https://github.com/oven-sh/bun/releases/latest/download/bun-linux-$build.zip" \
+      -fsSLO \
+      --compressed \
+      --retry 5 \
+    && unzip "bun-linux-$build.zip" \
+    && mv "bun-linux-$build/bun" /usr/local/bin/bun \
+    && rm -rf "bun-linux-$build.zip" "bun-linux-$build" \
+    && chmod +x /usr/local/bin/bun \
+    && ln -s /usr/local/bin/bun /usr/local/bin/bunx
+
+# Install BookStack MCP server globally via Bun
+RUN bun add -g bookstack-mcp-server
+
+# Secure the container by switching back to the default user
 USER 1001
