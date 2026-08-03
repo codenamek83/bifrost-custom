@@ -7,7 +7,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -18,68 +17,86 @@ jobs:
       packages: write
 
     steps:
-      # 1. CHECKOUT REPO
+      # 1. CHECKOUT REPOSITORY
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2. DISCOVER VERSION
+      # 2. NORMALIZE REPOSITORY OWNER
+      - name: Set lowercase image owner
+        id: repo_info
+        run: |
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      # 3. FETCH UPSTREAM VERSION
       - name: Fetch latest upstream version
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[].name' | grep '^transports/v[0-9]\+\.[0-9]\+\.[0-9]\+$' | sed 's/transports\///' | sort -V | tail -n 1 | tr -d '\r\n')
+          VERSION=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/maximhq/bifrost/tags \
+            | jq -r '.[].name' \
+            | grep '^transports/v[0-9]\+\.[0-9]\+\.[0-9]\+$' \
+            | sed 's/transports\///' \
+            | sort -V | tail -n 1 | tr -d '\r\n')
+
+          if [ -z "$VERSION" ]; then
+            echo "Error: Failed to fetch upstream version." >&2
+            exit 1
+          fi
+
           echo "Latest Bifrost Version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      # 3. VERSION CHECK VIA GHCR
-      - name: Check if image tag exists on GHCR
-        id: check_tag
-        run: |
-          IMAGE_TAG="ghcr.io/${{ github.repository_owner }}/bifrost-custom:${{ steps.version.outputs.version }}"
-
-          # Query GHCR manifest (works for public packages, or login if private)
-          if docker manifest inspect "$IMAGE_TAG" > /dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "Tag $IMAGE_TAG already exists in GHCR."
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Tag $IMAGE_TAG does not exist in GHCR."
-          fi
-
-      - name: Decide whether to build
-        id: decision
-        run: |
-          # ALWAYS build on manual trigger, push to main, or pull request.
-          # ONLY skip if triggered by 'schedule' AND the upstream image tag already exists in GHCR.
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.check_tag.outputs.exists }}" = "true" ]; then
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            echo "No new Bifrost version to build. Skipping."
-          else
-            echo "should_run=true" >> $GITHUB_OUTPUT
-          fi
-
-      # 4. CONTAINER TOOLING
-      - name: Set up Docker Buildx
-        if: steps.decision.outputs.should_run == 'true'
-        uses: docker/setup-buildx-action@v3
-
+      # 4. AUTHENTICATE TO GHCR
       - name: Log in to GitHub Container Registry
-        if: steps.decision.outputs.should_run == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 5. BUILD & PUBLISH
+      # 5. CHECK EXISTING TAG IN GHCR
+      - name: Check if image tag exists on GHCR
+        id: check_tag
+        run: |
+          IMAGE_TAG="ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom:${{ steps.version.outputs.version }}"
+          if docker manifest inspect "$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $IMAGE_TAG already exists in GHCR."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $IMAGE_TAG does not exist in GHCR."
+          fi
+
+      # 6. EVALUATE BUILD CONDITION
+      - name: Decide whether to build
+        id: decision
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.check_tag.outputs.exists }}" = "true" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "No new Bifrost version to build. Skipping."
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 7. SET UP DOCKER BUILDX
+      - name: Set up Docker Buildx
+        if: steps.decision.outputs.should_run == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # 8. BUILD AND PUSH IMAGE
       - name: Build and push Docker image
         if: steps.decision.outputs.should_run == 'true'
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --build-arg BIFROST_VERSION=${{ steps.version.outputs.version }} \
-            -t ghcr.io/${{ github.repository_owner }}/bifrost-custom:latest \
-            -t ghcr.io/${{ github.repository_owner }}/bifrost-custom:${{ steps.version.outputs.version }} \
-            -t ghcr.io/${{ github.repository_owner }}/bifrost-custom:sha-$SHORT_SHA \
-            --push \
-            .
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            BIFROST_VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom:latest
+            ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
