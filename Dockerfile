@@ -41,7 +41,8 @@ RUN apk add --no-cache ca-certificates curl unzip libgcc libstdc++ nodejs npm py
     && ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
 # Install BookStack MCP server globally via Bun
-RUN bun add -g bookstack-mcp-server
+RUN bun add -g bookstack-mcp-server \
+ && which bookstack-mcp-server
 
 # Secure the container by switching back to the default user
 USER 1001
