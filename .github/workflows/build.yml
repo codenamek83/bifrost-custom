@@ -23,9 +23,9 @@ jobs:
       - name: Fetch latest upstream version
         id: version
         run: |
-          VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[].name' | grep '^transports/v[0-9]\+\.[0-9]\+\.[0-9]\+$' | sed 's/transports\///' | sort -V | tail -n 1)
+          VERSION=$(curl -s https://api.github.com/repos/maximhq/bifrost/tags | jq -r '.[].name' | grep '^transports/v[0-9]\+\.[0-9]\+\.[0-9]\+$' | sed 's/transports\///' | sort -V | tail -n 1 | tr -d '\r\n')
           echo "Latest Bifrost Version: $VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       # 3. VERSION CHECK VIA GHCR
       - name: Check if image tag exists on GHCR
