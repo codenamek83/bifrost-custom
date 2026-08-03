@@ -7,8 +7,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - ".upstream-tag"
   pull_request:
   workflow_dispatch:
 
@@ -20,9 +18,6 @@ jobs:
       # 1. CHECKOUT REPO
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.DOCKER_GIT_ACTIONS }}
 
       # 2. DISCOVER VERSION
       - name: Fetch latest upstream version
@@ -32,29 +27,34 @@ jobs:
           echo "Latest Bifrost Version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # 3. VERSION CHECK LOGIC
-      - name: Read last built version
-        id: prev
+      # 3. VERSION CHECK VIA GHCR
+      - name: Check if image tag exists on GHCR
+        id: check_tag
         run: |
-          if [ -f .upstream-tag ]; then
-            echo "prev_version=$(cat .upstream-tag)" >> $GITHUB_OUTPUT
+          IMAGE_TAG="ghcr.io/${{ github.repository_owner }}/bifrost-custom:${{ steps.version.outputs.version }}"
+
+          # Query GHCR manifest (works for public packages, or login if private)
+          if docker manifest inspect "$IMAGE_TAG" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag $IMAGE_TAG already exists in GHCR."
           else
-            echo "prev_version=none" >> $GITHUB_OUTPUT
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag $IMAGE_TAG does not exist in GHCR."
           fi
 
       - name: Decide whether to build
         id: decision
         run: |
-          # ALWAYS build if manually triggered, on push, or on pull_request.
-          # ONLY skip if triggered by 'schedule' and the upstream version hasn't changed.
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.version.outputs.version }}" = "${{ steps.prev.outputs.prev_version }}" ]; then
+          # ALWAYS build on manual trigger, push to main, or pull request.
+          # ONLY skip if triggered by 'schedule' AND the upstream image tag already exists in GHCR.
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "${{ steps.check_tag.outputs.exists }}" = "true" ]; then
             echo "should_run=false" >> $GITHUB_OUTPUT
-            echo "No new Bifrost release found. Skipping build."
+            echo "No new Bifrost version to build. Skipping."
           else
             echo "should_run=true" >> $GITHUB_OUTPUT
           fi
 
-      # 4. CONTAINER TOOLING (Runs only if decision is true)
+      # 4. CONTAINER TOOLING
       - name: Set up Docker Buildx
         if: steps.decision.outputs.should_run == 'true'
         uses: docker/setup-buildx-action@v3
@@ -65,7 +65,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.DOCKER_GIT_ACTIONS }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       # 5. BUILD & PUBLISH
       - name: Build and push Docker image
@@ -80,14 +80,3 @@ jobs:
             -t ghcr.io/${{ github.repository_owner }}/bifrost-custom:sha-$SHORT_SHA \
             --push \
             .
-
-      # 6. STATE MANAGEMENT
-      - name: Update Upstream Tag
-        if: steps.decision.outputs.should_run == 'true' && github.event_name != 'pull_request'
-        run: |
-          echo "${{ steps.version.outputs.version }}" > .upstream-tag
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .upstream-tag
-          git commit -m "chore: update upstream Bifrost version to ${{ steps.version.outputs.version }}" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.DOCKER_GIT_ACTIONS }}@github.com/${{ github.repository }} HEAD:${{ github.ref_name }}
