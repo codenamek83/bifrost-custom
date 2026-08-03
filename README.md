@@ -2,13 +2,13 @@
 
 A customized build of the [Bifrost](https://github.com/maximhq/bifrost) Docker image, extended with additional language runtimes and pre-installed MCP (Model Context Protocol) servers.
 
-## 🚀 Features
+### 🚀 Features
 
 - **Base Image**: Built on top of `maximhq/bifrost`.
-- **Extended Runtimes**: Includes `Node.js`, `npm`, `Python 3`, and `pip` to support a wider range of MCP tools.
+- **Extended Runtimes**: Includes `Bun`, `Node.js`, `npm`, `Python 3`, and `pip` to support a wider range of MCP tools.
 - **Pre-installed Tools**: 
-  - `bookstack-mcp-server`: Ready-to-use integration for BookStack.
-- **Multi-Architecture Support**: Automatically built for both `linux/amd64` and `linux/arm64`.
+  - `bookstack-mcp-server`: Ready-to-use integration for BookStack (installed via Bun).
+- **Multi-Architecture Support**: Automatically detects and builds Bun binaries for `x86_64` (musl baseline) and `aarch64` (musl).
 
 ## 📦 Usage
 
@@ -29,13 +29,14 @@ docker run -d \
 
 ## 🛠 Customization
 
-Adding new MCP servers is straightforward. Edit the `Dockerfile` and add the installation command in the `RUN` section:
+Adding new MCP servers is straightforward. Edit the `Dockerfile` and add the installation command in the `RUN` section using either **Bun** or **npm**:
 
 ```dockerfile
-# Example: Adding more MCP servers
-RUN npm install -g bookstack-mcp-server \
-    another-mcp-server \
-    yet-another-mcp-tool
+# Example: Adding MCP servers via Bun
+RUN bun add -g bookstack-mcp-server
+
+# Example: Adding MCP servers via npm
+RUN npm install -g another-node-mcp-server
 ```
 
 After editing, push your changes to the `main` branch to trigger the automatic build pipeline.
@@ -49,7 +50,6 @@ This repository uses GitHub Actions for fully automated build and release manage
   - `:latest` - The most recent successful build.
   - `:<version>` - Pinned to the specific upstream Bifrost version.
   - `:sha-<hash>` - Pinned to the specific git commit of this repository for precise rollbacks.
-- **Upstream Tracking**: The `.upstream-tag` file stores the version of the last successful build. This allows the `auto-rebuild` workflow to detect when a new upstream version is available and trigger a rebuild automatically.
 
 ## 💻 Local Building
 
