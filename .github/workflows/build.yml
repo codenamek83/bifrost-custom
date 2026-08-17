@@ -91,6 +91,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
       # 9. BUILD AND PUSH IMAGE
       - name: Build and push Docker image
