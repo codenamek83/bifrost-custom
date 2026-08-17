@@ -84,7 +84,15 @@ jobs:
         if: steps.decision.outputs.should_run == 'true'
         uses: docker/setup-buildx-action@v3
 
-      # 8. BUILD AND PUSH IMAGE
+      # 8. EXTRACT DOCKER METADATA
+      - name: Extract Docker metadata
+        if: steps.decision.outputs.should_run == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom
+
+      # 9. BUILD AND PUSH IMAGE
       - name: Build and push Docker image
         if: steps.decision.outputs.should_run == 'true'
         uses: docker/build-push-action@v6
@@ -98,5 +106,6 @@ jobs:
             ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom:latest
             ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom:${{ steps.version.outputs.version }}
             ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom:sha-${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -1,13 +1,6 @@
 ARG BIFROST_VERSION=latest
 FROM maximhq/bifrost:${BIFROST_VERSION}
 
-# Re-declare ARG after FROM to make it available for labels
-ARG BIFROST_VERSION
-
-# Add version and metadata labels
-LABEL org.opencontainers.image.version=${BIFROST_VERSION} \
-      org.opencontainers.image.description="Custom Bifrost build with MCP Servers"
-
 # Switch to root to install runtimes
 USER root
 
