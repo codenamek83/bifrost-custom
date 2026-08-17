@@ -93,6 +93,8 @@ jobs:
           images: ghcr.io/${{ steps.repo_info.outputs.owner }}/bifrost-custom
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.documentation=https://docs.getbifrost.ai
+            vendor.bifrost.upstream_url=https://github.com/maximhq/bifrost
 
       # 9. BUILD AND PUSH IMAGE
       - name: Build and push Docker image
